@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comparateur Châssis Véhicules</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚗</text></svg>">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+        :root {
+            --bg: #0B0F1A; --surface: #131829; --surface-alt: #1A2035;
+            --card: #1E2642; --border: #2A3456; --border-light: #3A4A70;
+            --accent: #F59E0B; --accent-dim: rgba(245,158,11,0.15);
+            --accent-glow: rgba(245,158,11,0.3);
+            --green: #10B981; --green-dim: rgba(16,185,129,0.12);
+            --red: #EF4444; --red-dim: rgba(239,68,68,0.12);
+            --blue: #3B82F6; --blue-dim: rgba(59,130,246,0.12);
+            --text: #E8ECF4; --text-sec: #8B95B0; --text-dim: #5A6480;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            min-height: 100vh;
+            background: linear-gradient(160deg, var(--bg) 0%, #0D1225 50%, #10162D 100%);
+            color: var(--text);
+            font-family: 'Inter', sans-serif;
+        }
+
+        body::before {
+            content: '';
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background-image: linear-gradient(rgba(42,52,86,0.13) 1px, transparent 1px),
+                              linear-gradient(90deg, rgba(42,52,86,0.13) 1px, transparent 1px);
+            background-size: 40px 40px;
+            pointer-events: none; z-index: 0;
+        }
+
+        .container { position: relative; z-index: 1; max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
+
+        /* Header */
+        .header { text-align: center; margin-bottom: 32px; }
+        .header-logo {
+            display: inline-flex; align-items: center; gap: 12px; margin-bottom: 8px;
+        }
+        .header-icon {
+            width: 44px; height: 44px; border-radius: 12px;
+            background: linear-gradient(135deg, var(--accent), #D97706);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 22px; font-weight: 900; color: var(--bg);
+            box-shadow: 0 0 30px var(--accent-glow);
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .header h1 {
+            font-size: 24px; font-weight: 800; letter-spacing: -0.5px;
+            background: linear-gradient(90deg, var(--text), var(--accent));
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .header p {
+            color: var(--text-sec); font-size: 12px; letter-spacing: 2px;
+            text-transform: uppercase; font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Steps */
+        .steps { display: flex; justify-content: center; gap: 4px; margin-bottom: 32px; }
+        .step-item { display: flex; align-items: center; gap: 6px; }
+        .step-num {
+            width: 30px; height: 30px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 12px; font-weight: 700; transition: all 0.3s;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .step-num.active { background: var(--accent); color: var(--bg); }
+        .step-num.done { background: var(--green); color: var(--bg); }
+        .step-num.pending { background: var(--surface-alt); color: var(--text-dim); }
+        .step-label { font-size: 12px; font-weight: 500; }
+        .step-label.active { color: var(--accent); font-weight: 700; }
+        .step-label.done { color: var(--green); }
+        .step-label.pending { color: var(--text-dim); }
+        .step-line { width: 40px; height: 1px; background: var(--border); margin: 0 6px; }
+
+        /* Drop zone */
+        .dropzone {
+            border: 2px dashed var(--border); border-radius: 16px;
+            padding: 60px 40px; text-align: center; cursor: pointer;
+            background: var(--surface); transition: all 0.3s;
+        }
+        .dropzone:hover, .dropzone.dragover {
+            border-color: var(--accent); background: var(--accent-dim);
+            box-shadow: 0 0 40px var(--accent-glow);
+        }
+        .dropzone .icon { font-size: 52px; margin-bottom: 16px; }
+        .dropzone h3 { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
+        .dropzone p { color: var(--text-sec); font-size: 13px; }
+
+        /* Panel */
+        .panel {
+            background: var(--surface); border-radius: 16px;
+            border: 1px solid var(--border); overflow: hidden;
+        }
+        .panel-header {
+            background: var(--surface-alt); padding: 14px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex; justify-content: space-between; align-items: center;
+            flex-wrap: wrap; gap: 8px;
+        }
+        .panel-body { padding: 24px; }
+
+        /* Form */
+        .form-group { margin-bottom: 20px; }
+        .form-label {
+            display: block; font-size: 11px; font-weight: 700; color: var(--accent);
+            letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .form-label-sm {
+            display: block; font-size: 10px; font-weight: 600; color: var(--text-sec);
+            text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;
+        }
+        select, input[type="text"] {
+            width: 100%; padding: 10px 14px; border-radius: 8px;
+            border: 1px solid var(--border-light);
+            background: var(--card); color: var(--text);
+            font-size: 13px; font-family: 'Inter', sans-serif; outline: none;
+        }
+        select:focus, input:focus { border-color: var(--accent); }
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+        @media(max-width:700px) { .form-grid { grid-template-columns: 1fr; } }
+
+        .range-wrap { position: relative; }
+        input[type="range"] { width: 100%; accent-color: var(--accent); }
+        .range-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-dim); margin-top: 4px; }
+
+        /* Buttons */
+        .btn {
+            padding: 12px 22px; border-radius: 8px; border: none;
+            font-size: 13px; font-weight: 700; cursor: pointer;
+            font-family: 'Inter', sans-serif; transition: all 0.2s;
+            display: inline-flex; align-items: center; gap: 6px;
+        }
+        .btn-ghost {
+            background: transparent; border: 1px solid var(--border);
+            color: var(--text-sec);
+        }
+        .btn-ghost:hover { border-color: var(--text-sec); color: var(--text); }
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent), #D97706);
+            color: var(--bg); font-size: 14px; font-weight: 800;
+            box-shadow: 0 4px 20px var(--accent-glow);
+        }
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 25px var(--accent-glow); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .btn-export {
+            background: linear-gradient(135deg, var(--green), #059669);
+            color: #fff; box-shadow: 0 4px 15px rgba(16,185,129,0.3);
+        }
+        .btn-row { display: flex; gap: 12px; margin-top: 12px; }
+        .btn-row .btn-primary { flex: 1; justify-content: center; }
+
+        /* Stats */
+        .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+        @media(max-width:600px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+        .stat-card {
+            background: var(--surface); border-radius: 12px; padding: 16px;
+            border: 1px solid var(--border); text-align: center;
+        }
+        .stat-card .icon { font-size: 22px; margin-bottom: 4px; }
+        .stat-card .value { font-size: 26px; font-weight: 900; font-family: 'JetBrains Mono', monospace; }
+        .stat-card .label { font-size: 10px; color: var(--text-sec); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+
+        /* Results */
+        .result-group {
+            background: var(--surface); border-radius: 12px;
+            border: 1px solid var(--border); overflow: hidden;
+            margin-bottom: 16px;
+        }
+        .result-header {
+            background: var(--accent-dim); padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex; justify-content: space-between; align-items: center;
+            flex-wrap: wrap; gap: 8px;
+        }
+        .badge {
+            font-size: 10px; font-weight: 800; padding: 3px 8px;
+            border-radius: 4px; letter-spacing: 0.5px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .badge-search { background: var(--accent); color: var(--bg); }
+        .badge-cible { background: var(--accent); color: var(--bg); font-size: 9px; }
+        .badge-match { background: var(--red); color: #fff; font-size: 9px; }
+        .chassis-text {
+            font-size: 14px; font-weight: 700; color: var(--accent);
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .meta { display: flex; gap: 16px; font-size: 11px; color: var(--text-sec); }
+        .meta b { color: var(--text); }
+        .meta .red { color: var(--red); }
+
+        table { width: 100%; border-collapse: collapse; font-size: 11px; }
+        th {
+            padding: 8px 12px; text-align: left; color: var(--text-dim);
+            font-weight: 600; font-size: 10px; letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--border); text-transform: uppercase;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        td {
+            padding: 8px 12px; border-bottom: 1px solid var(--border);
+            white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis;
+        }
+        tr.row-cible { background: var(--accent-dim); }
+        tr.row-match { background: var(--red-dim); }
+        td.val-accent { font-weight: 700; color: var(--accent); font-family: 'JetBrains Mono', monospace; }
+        td.val-red { font-weight: 700; color: var(--red); font-family: 'JetBrains Mono', monospace; }
+        .table-wrap { overflow-x: auto; }
+
+        /* Empty state */
+        .empty-state { text-align: center; padding: 48px; }
+        .empty-state .icon { font-size: 52px; margin-bottom: 12px; }
+        .empty-state h3 { font-size: 18px; font-weight: 700; color: var(--green); }
+        .empty-state p { color: var(--text-sec); font-size: 13px; margin-top: 8px; }
+
+        .tag { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+        .tag b { color: var(--accent); }
+
+        .hidden { display: none !important; }
+        .loading { color: var(--accent); margin-top: 16px; font-size: 13px; }
+
+        /* Login overlay */
+        .login-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(11,15,26,0.95); z-index: 1000;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .login-box {
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: 20px; padding: 40px; width: 380px; max-width: 90vw;
+            text-align: center;
+        }
+        .login-box h2 { font-size: 20px; margin-bottom: 8px; }
+        .login-box p { color: var(--text-sec); font-size: 13px; margin-bottom: 24px; }
+        .login-box input {
+            margin-bottom: 16px; text-align: center; font-size: 15px;
+            letter-spacing: 2px; padding: 14px;
+        }
+        .login-box .btn-primary { width: 100%; justify-content: center; font-size: 15px; padding: 14px; }
+        .login-error { color: var(--red); font-size: 12px; margin-bottom: 12px; }
+    </style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="loginOverlay" class="login-overlay">
+    <div class="login-box">
+        <div style="font-size:48px;margin-bottom:12px">🔐</div>
+        <h2>Accès sécurisé</h2>
+        <p>Entrez le code d'accès pour utiliser l'application</p>
+        <div id="loginError" class="login-error hidden"></div>
+        <input type="password" id="loginCode" placeholder="Code d'accès" onkeypress="if(event.key==='Enter')doLogin()">
+        <button class="btn btn-primary" onclick="doLogin()">🔓 Se connecter</button>
+    </div>
+</div>
+
+<!-- APP -->
+<div id="app" class="hidden">
+<div class="container">
+
+    <!-- Header -->
+    <div class="header">
+        <div class="header-logo">
+            <div class="header-icon">V</div>
+            <h1>COMPARATEUR CHASSIS</h1>
+        </div>
+        <p>Détection de sous-évaluation VALFOB par comparaison des châssis</p>
+    </div>
+
+    <!-- Steps -->
+    <div class="steps">
+        <div class="step-item">
+            <div class="step-num active" id="stepNum1">1</div>
+            <span class="step-label active" id="stepLabel1">Fichier</span>
+        </div>
+        <div class="step-line"></div>
+        <div class="step-item">
+            <div class="step-num pending" id="stepNum2">2</div>
+            <span class="step-label pending" id="stepLabel2">Config</span>
+        </div>
+        <div class="step-line"></div>
+        <div class="step-item">
+            <div class="step-num pending" id="stepNum3">3</div>
+            <span class="step-label pending" id="stepLabel3">Résultats</span>
+        </div>
+    </div>
+
+    <!-- STEP 1: Upload -->
+    <div id="step1">
+        <div class="dropzone" id="dropzone" onclick="document.getElementById('fileInput').click()">
+            <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none" onchange="handleFile(this.files[0])">
+            <div class="icon">📂</div>
+            <h3>Glissez votre fichier Excel ici</h3>
+            <p>ou cliquez pour parcourir — format .xlsx avec onglet BASE</p>
+            <div id="loadingMsg" class="loading hidden">⏳ Chargement en cours...</div>
+        </div>
+    </div>
+
+    <!-- STEP 2: Config -->
+    <div id="step2" class="hidden">
+        <div class="panel">
+            <div class="panel-header">
+                <div style="display:flex;align-items:center;gap:8px">
+                    <span style="font-size:16px">📄</span>
+                    <span style="font-weight:700;font-size:13px" id="fileNameDisplay"></span>
+                </div>
+                <div style="display:flex;gap:16px;font-size:12px;color:var(--text-sec)">
+                    <span class="tag"><b id="rowCount"></b> lignes</span>
+                    <span class="tag"><b id="colCount"></b> colonnes</span>
+                    <span class="tag"><b id="opCount"></b> opérateurs</span>
+                </div>
+            </div>
+            <div class="panel-body">
+                <div class="form-group">
+                    <label class="form-label">Opérateur cible</label>
+                    <select id="selOperateur"></select>
+                </div>
+                <div class="form-grid">
+                    <div>
+                        <label class="form-label-sm">Colonne Châssis</label>
+                        <select id="selChassis"></select>
+                    </div>
+                    <div>
+                        <label class="form-label-sm">Colonne VALFOB</label>
+                        <select id="selValfob"></select>
+                    </div>
+                    <div>
+                        <label class="form-label-sm">Colonne Opérateur</label>
+                        <select id="selOpCol"></select>
+                    </div>
+                </div>
+                <div class="form-group" style="margin-top:20px">
+                    <label class="form-label-sm">
+                        Nombre de caractères à comparer : <b style="color:var(--accent);font-size:14px" id="nbCharsDisplay">10</b>
+                    </label>
+                    <div class="range-wrap">
+                        <input type="range" id="nbChars" min="4" max="17" value="10" oninput="document.getElementById('nbCharsDisplay').textContent=this.value">
+                        <div class="range-labels"><span>4 (large)</span><span>17 (exact)</span></div>
+                    </div>
+                </div>
+                <div class="btn-row">
+                    <button class="btn btn-ghost" onclick="goToStep(1)">← Retour</button>
+                    <button class="btn btn-primary" id="btnSearch" onclick="runSearch()">🔍 LANCER LA RECHERCHE</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- STEP 3: Results -->
+    <div id="step3" class="hidden">
+        <div class="stats">
+            <div class="stat-card"><div class="icon">🏢</div><div class="value" id="statCible">0</div><div class="label">Lignes opérateur</div></div>
+            <div class="stat-card"><div class="icon">📊</div><div class="value" id="statAutres" style="color:var(--blue)">0</div><div class="label">Autres transactions</div></div>
+            <div class="stat-card"><div class="icon">🔗</div><div class="value" id="statFound">0</div><div class="label">Châssis avec match</div></div>
+            <div class="stat-card"><div class="icon">⚠️</div><div class="value" id="statMatches">0</div><div class="label">Correspondances</div></div>
+        </div>
+        <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap">
+            <button class="btn btn-ghost" onclick="goToStep(2)">← Modifier config</button>
+            <button class="btn btn-ghost" onclick="goToStep(1);resetAll()">📂 Nouveau fichier</button>
+            <button class="btn btn-export" id="btnExport" onclick="exportResults()" style="margin-left:auto">📥 Exporter TROUVER.xlsx</button>
+        </div>
+        <div id="resultsContainer"></div>
+    </div>
+
+</div>
+</div>
+
+<script>
+// ============ CONFIG ============
+// Changez ce code d'accès pour sécuriser l'application
+const ACCESS_CODE = "chassis2024";
+// ================================
+
+let appData = { headers: [], rows: [], operators: [], results: null, fileName: "" };
+const DISPLAY_COLS_PRIORITY = ["MARQUE2","VALFOB","OPERATEUR","MARQUE1","NUMENR","ORIGINE","PROVENANCE"];
+
+// LOGIN
+function doLogin() {
+    const code = document.getElementById("loginCode").value;
+    if (code === ACCESS_CODE) {
+        document.getElementById("loginOverlay").classList.add("hidden");
+        document.getElementById("app").classList.remove("hidden");
+    } else {
+        const err = document.getElementById("loginError");
+        err.textContent = "Code incorrect. Réessayez.";
+        err.classList.remove("hidden");
+    }
+}
+
+// DRAG & DROP
+const dz = document.getElementById("dropzone");
+dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("dragover"); });
+dz.addEventListener("dragleave", () => dz.classList.remove("dragover"));
+dz.addEventListener("drop", (e) => { e.preventDefault(); dz.classList.remove("dragover"); handleFile(e.dataTransfer.files[0]); });
+
+function handleFile(file) {
+    if (!file) return;
+    appData.fileName = file.name;
+    document.getElementById("loadingMsg").classList.remove("hidden");
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const wb = XLSX.read(e.target.result, { type: "array" });
+            const sheetName = wb.SheetNames.find(n => n.toUpperCase() === "BASE") || wb.SheetNames[0];
+            const json = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: "" });
+            if (!json.length) { alert("Onglet BASE vide !"); return; }
+
+            appData.headers = Object.keys(json[0]);
+            appData.rows = json;
+
+            // Auto-detect columns
+            const opCol = appData.headers.find(h => h.toUpperCase().includes("OPERATEUR")) || appData.headers[0];
+            const chCol = appData.headers.find(h => h.toUpperCase() === "MARQUE2") || appData.headers[0];
+            const vfCol = appData.headers.find(h => h.toUpperCase().includes("VALFOB")) || appData.headers[0];
+
+            // Get operators
+            appData.operators = [...new Set(json.map(r => String(r[opCol]||"").trim()).filter(Boolean))];
+
+            // Populate selects
+            populateSelect("selOperateur", appData.operators.map(o => ({v:o, t:o.replace(/\n/g," ").slice(0,80)})));
+            const ml = appData.operators.find(o => o.toUpperCase().includes("MOTORLAND"));
+            if (ml) document.getElementById("selOperateur").value = ml;
+
+            for (const [selId, defaultVal] of [["selChassis",chCol],["selValfob",vfCol],["selOpCol",opCol]]) {
+                populateSelect(selId, appData.headers.map(h => ({v:h, t:h})));
+                document.getElementById(selId).value = defaultVal;
+            }
+
+            document.getElementById("fileNameDisplay").textContent = file.name;
+            document.getElementById("rowCount").textContent = json.length;
+            document.getElementById("colCount").textContent = appData.headers.length;
+            document.getElementById("opCount").textContent = appData.operators.length;
+
+            goToStep(2);
+        } catch(err) {
+            alert("Erreur lecture: " + err.message);
+        }
+        document.getElementById("loadingMsg").classList.add("hidden");
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+function populateSelect(id, options) {
+    const sel = document.getElementById(id);
+    sel.innerHTML = options.map(o => `<option value="${escHtml(o.v)}">${escHtml(o.t)}</option>`).join("");
+}
+
+function escHtml(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+function cleanChassis(val) {
+    let s = String(val||"").trim().toUpperCase();
+    for (const pfx of ["CHASSIS:","CHASSIS :","CH:","CH :","CH//"]) {
+        if (s.startsWith(pfx)) s = s.slice(pfx.length).trim();
+    }
+    return s;
+}
+
+function parseNum(v) {
+    if (v == null) return 0;
+    if (typeof v === "number") return v;
+    const n = parseFloat(String(v).replace(/[^0-9.\-]/g,""));
+    return isNaN(n) ? 0 : n;
+}
+
+function runSearch() {
+    const colOp = document.getElementById("selOpCol").value;
+    const colCh = document.getElementById("selChassis").value;
+    const colVf = document.getElementById("selValfob").value;
+    const opCible = document.getElementById("selOperateur").value;
+    const nbC = parseInt(document.getElementById("nbChars").value);
+
+    const cible = appData.rows.filter(r => String(r[colOp]||"").toUpperCase().includes(opCible.toUpperCase()));
+    const autres = appData.rows.filter(r => !String(r[colOp]||"").toUpperCase().includes(opCible.toUpperCase()));
+
+    const found = [];
+    let totalMatches = 0;
+
+    for (const row of cible) {
+        const chassis = cleanChassis(row[colCh]);
+        const prefix = chassis.slice(0, nbC);
+        if (!prefix || prefix === "NAN" || prefix === "UNDEFINED") continue;
+        const valfob = parseNum(row[colVf]);
+
+        const matches = autres.filter(r => {
+            const p = cleanChassis(r[colCh]).slice(0, nbC);
+            const v = parseNum(r[colVf]);
+            return p === prefix && v > valfob;
+        });
+
+        if (matches.length > 0) {
+            totalMatches += matches.length;
+            found.push({ source: row, chassis, prefix, valfob, matches, colCh, colVf, colOp });
+        }
+    }
+
+    appData.results = { found, totalMatches, nbCible: cible.length, nbAutres: autres.length, colCh, colVf, colOp, opCible };
+    renderResults();
+    goToStep(3);
+}
+
+function renderResults() {
+    const r = appData.results;
+    document.getElementById("statCible").textContent = r.nbCible.toLocaleString();
+    document.getElementById("statAutres").textContent = r.nbAutres.toLocaleString();
+    document.getElementById("statFound").textContent = r.found.length.toLocaleString();
+    document.getElementById("statFound").style.color = r.found.length > 0 ? "var(--red)" : "var(--green)";
+    document.getElementById("statMatches").textContent = r.totalMatches.toLocaleString();
+    document.getElementById("statMatches").style.color = r.totalMatches > 0 ? "var(--red)" : "var(--green)";
+    document.getElementById("btnExport").style.display = r.found.length > 0 ? "" : "none";
+
+    const container = document.getElementById("resultsContainer");
+
+    if (r.found.length === 0) {
+        container.innerHTML = `<div class="panel"><div class="empty-state">
+            <div class="icon">✅</div>
+            <h3>Aucune anomalie détectée</h3>
+            <p>Aucun châssis de ${escHtml(r.opCible.replace(/\n/g," ").slice(0,40))} n'a de correspondance avec une VALFOB supérieure chez un autre opérateur.</p>
+        </div></div>`;
+        return;
+    }
+
+    const dCols = DISPLAY_COLS_PRIORITY.filter(c => appData.headers.includes(c));
+
+    let html = "";
+    for (const group of r.found) {
+        html += `<div class="result-group">
+            <div class="result-header">
+                <div style="display:flex;align-items:center;gap:10px">
+                    <span class="badge badge-search">RECHERCHE</span>
+                    <span class="chassis-text">${escHtml(group.chassis)}</span>
+                </div>
+                <div class="meta">
+                    <span>Préfixe: <b>${escHtml(group.prefix)}</b></span>
+                    <span>VALFOB: <b style="color:var(--accent)">${group.valfob.toLocaleString()}</b></span>
+                    <span class="red"><b>${group.matches.length}</b> match(es)</span>
+                </div>
+            </div>
+            <div class="table-wrap"><table>
+                <thead><tr><th>Statut</th>${dCols.map(c=>`<th>${escHtml(c)}</th>`).join("")}</tr></thead>
+                <tbody>
+                    <tr class="row-cible">
+                        <td><span class="badge badge-cible">CIBLE</span></td>
+                        ${dCols.map(c=>`<td class="${c===r.colVf?'val-accent':''}">${c===r.colVf ? parseNum(group.source[c]).toLocaleString() : escHtml(String(group.source[c]||"").replace(/\n/g," ").slice(0,60))}</td>`).join("")}
+                    </tr>
+                    ${group.matches.map((m,i) => `<tr class="${i%2===0?'row-match':''}">
+                        <td><span class="badge badge-match">MATCH</span></td>
+                        ${dCols.map(c=>`<td class="${c===r.colVf?'val-red':''}">${c===r.colVf ? parseNum(m[c]).toLocaleString() : escHtml(String(m[c]||"").replace(/\n/g," ").slice(0,60))}</td>`).join("")}
+                    </tr>`).join("")}
+                </tbody>
+            </table></div>
+        </div>`;
+    }
+    container.innerHTML = html;
+}
+
+function exportResults() {
+    if (!appData.results || appData.results.found.length === 0) return;
+    const r = appData.results;
+    const exportRows = [];
+
+    for (const group of r.found) {
+        exportRows.push({ ...group.source, _STATUT: `RECHERCHE (${r.opCible.replace(/\n/g," ").slice(0,40)})` });
+        for (const m of group.matches) {
+            exportRows.push({ ...m, _STATUT: "CORRESPONDANCE" });
+        }
+        exportRows.push({});
+    }
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(exportRows);
+    XLSX.utils.book_append_sheet(wb, ws, "TROUVER");
+    XLSX.writeFile(wb, `RESULTAT_${r.opCible.replace(/[^a-zA-Z0-9]/g,"_").slice(0,30)}.xlsx`);
+}
+
+function goToStep(n) {
+    for (let i = 1; i <= 3; i++) {
+        document.getElementById(`step${i}`).classList.toggle("hidden", i !== n);
+        const num = document.getElementById(`stepNum${i}`);
+        const lbl = document.getElementById(`stepLabel${i}`);
+        num.className = `step-num ${i === n ? "active" : i < n ? "done" : "pending"}`;
+        lbl.className = `step-label ${i === n ? "active" : i < n ? "done" : "pending"}`;
+    }
+}
+
+function resetAll() {
+    appData = { headers: [], rows: [], operators: [], results: null, fileName: "" };
+    document.getElementById("resultsContainer").innerHTML = "";
+}
+</script>
+</body>
+</html>
