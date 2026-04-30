@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Comparateur Châssis Véhicules</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚗</text></svg>">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&family=Inter:wght@400;500;600;700;800;900&display=swap');
 
@@ -227,6 +227,18 @@
         .hidden { display: none !important; }
         .loading { color: var(--accent); margin-top: 16px; font-size: 13px; }
 
+        /* Progress bar */
+        .progress-wrap { margin-top: 16px; }
+        .progress-label { font-size: 12px; color: var(--text-sec); margin-bottom: 6px; }
+        .progress-track { background: var(--surface-alt); border-radius: 4px; overflow: hidden; height: 6px; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #D97706); transition: width 0.25s ease; width: 0%; }
+
+        /* Pagination */
+        .pagination { display: flex; align-items: center; gap: 12px; margin-top: 20px; flex-wrap: wrap; }
+        .page-info { font-size: 12px; color: var(--text-sec); flex: 1; text-align: center; }
+        .btn-page { padding: 8px 16px; font-size: 12px; }
+        .btn-page:disabled { opacity: 0.3; cursor: not-allowed; }
+
         /* Login overlay */
         .login-overlay {
             position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -299,7 +311,7 @@
             <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none" onchange="handleFile(this.files[0])">
             <div class="icon">📂</div>
             <h3>Glissez votre fichier Excel ici</h3>
-            <p>ou cliquez pour parcourir — format .xlsx avec onglet BASE</p>
+            <p>ou cliquez pour parcourir — format .xlsx</p>
             <div id="loadingMsg" class="loading hidden">⏳ Chargement en cours...</div>
         </div>
     </div>
@@ -346,6 +358,10 @@
                         <div class="range-labels"><span>4 (large)</span><span>17 (exact)</span></div>
                     </div>
                 </div>
+                <div id="searchProgress" class="progress-wrap hidden">
+                    <div class="progress-label" id="searchProgressMsg">Analyse en cours...</div>
+                    <div class="progress-track"><div class="progress-fill" id="searchProgressBar"></div></div>
+                </div>
                 <div class="btn-row">
                     <button class="btn btn-ghost" onclick="goToStep(1)">← Retour</button>
                     <button class="btn btn-primary" id="btnSearch" onclick="runSearch()">🔍 LANCER LA RECHERCHE</button>
@@ -368,6 +384,11 @@
             <button class="btn btn-export" id="btnExport" onclick="exportResults()" style="margin-left:auto">📥 Exporter TROUVER.xlsx</button>
         </div>
         <div id="resultsContainer"></div>
+        <div id="paginationControls" class="pagination hidden">
+            <button class="btn btn-ghost btn-page" id="btnPrev" onclick="prevPage()">← Préc.</button>
+            <span class="page-info" id="pageInfo"></span>
+            <button class="btn btn-ghost btn-page" id="btnNext" onclick="nextPage()">Suiv. →</button>
+        </div>
     </div>
 
 </div>
@@ -375,11 +396,26 @@
 
 <script>
 // ============ CONFIG ============
-// Changez ce code d'accès pour sécuriser l'application
-const ACCESS_CODE = "chassis2024";
+const ACCESS_CODE = "123";
+const PAGE_SIZE = 100; // groupes affichés par page
 // ================================
 
-let appData = { headers: [], rows: [], operators: [], results: null, fileName: "" };
+// Code du Web Worker embarqué — parse XLSX sans bloquer l'UI
+const XLSX_WORKER_CODE = `
+importScripts('https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js');
+onmessage = function(e) {
+    try {
+        const wb = XLSX.read(e.data, { type: "array", cellDates: false, cellNF: false, cellStyles: false, raw: true });
+        const sheetName = wb.SheetNames[0];
+        const json = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: "" });
+        postMessage({ ok: true, json });
+    } catch(err) {
+        postMessage({ ok: false, error: err.message });
+    }
+};
+`;
+
+let appData = { headers: [], rows: [], operators: [], results: null, fileName: "", currentPage: 0 };
 const DISPLAY_COLS_PRIORITY = ["MARQUE2","VALFOB","OPERATEUR","MARQUE1","NUMENR","ORIGINE","PROVENANCE"];
 
 // LOGIN
@@ -401,50 +437,101 @@ dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("d
 dz.addEventListener("dragleave", () => dz.classList.remove("dragover"));
 dz.addEventListener("drop", (e) => { e.preventDefault(); dz.classList.remove("dragover"); handleFile(e.dataTransfer.files[0]); });
 
+// ---- Helpers UI ----
+function setLoadingMsg(text) {
+    const el = document.getElementById("loadingMsg");
+    el.textContent = text;
+    el.classList.remove("hidden");
+}
+function hideLoadingMsg() { document.getElementById("loadingMsg").classList.add("hidden"); }
+
+function setSearchProgress(msg, ratio) {
+    document.getElementById("searchProgress").classList.remove("hidden");
+    document.getElementById("searchProgressMsg").textContent = msg;
+    document.getElementById("searchProgressBar").style.width = Math.round(ratio * 100) + "%";
+}
+function hideSearchProgress() { document.getElementById("searchProgress").classList.add("hidden"); }
+
+// Cède la main au navigateur pour mettre à jour l'UI
+function tick() { return new Promise(r => setTimeout(r, 0)); }
+
+// ---- Chargement fichier ----
+function processData(json, fileName) {
+    if (!json.length) { alert("Le premier onglet du fichier est vide ou ne contient pas de données."); return; }
+    appData.headers = Object.keys(json[0]);
+    appData.rows = json;
+
+    const opCol = appData.headers.find(h => h.toUpperCase().includes("OPERATEUR")) || appData.headers[0];
+    const chCol = appData.headers.find(h => h.toUpperCase() === "MARQUE2") || appData.headers[0];
+    const vfCol = appData.headers.find(h => h.toUpperCase().includes("VALFOB")) || appData.headers[0];
+
+    appData.operators = [...new Set(json.map(r => String(r[opCol]||"").trim()).filter(Boolean))];
+
+    populateSelect("selOperateur", appData.operators.map(o => ({v:o, t:o.replace(/\n/g," ").slice(0,80)})));
+    const ml = appData.operators.find(o => o.toUpperCase().includes("MOTORLAND"));
+    if (ml) document.getElementById("selOperateur").value = ml;
+
+    for (const [selId, defaultVal] of [["selChassis",chCol],["selValfob",vfCol],["selOpCol",opCol]]) {
+        populateSelect(selId, appData.headers.map(h => ({v:h, t:h})));
+        document.getElementById(selId).value = defaultVal;
+    }
+
+    document.getElementById("fileNameDisplay").textContent = fileName;
+    document.getElementById("rowCount").textContent = json.length.toLocaleString();
+    document.getElementById("colCount").textContent = appData.headers.length;
+    document.getElementById("opCount").textContent = appData.operators.length;
+    goToStep(2);
+}
+
+function mainThreadParse(buffer, fileName) {
+    try {
+        const wb = XLSX.read(buffer, { type: "array", cellDates: false, cellNF: false, cellStyles: false, raw: true });
+        const sheetName = wb.SheetNames[0];
+        const json = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: "" });
+        hideLoadingMsg();
+        processData(json, fileName);
+    } catch(err) {
+        hideLoadingMsg();
+        alert("Erreur lecture: " + err.message);
+    }
+}
+
 function handleFile(file) {
     if (!file) return;
     appData.fileName = file.name;
-    document.getElementById("loadingMsg").classList.remove("hidden");
+    setLoadingMsg("Lecture du fichier...");
 
     const reader = new FileReader();
     reader.onload = (e) => {
+        setLoadingMsg("Analyse des données — veuillez patienter...");
+        const buffer = e.target.result;
+
+        // Web Worker : parse XLSX sans bloquer l'UI (requiert HTTP, pas file://)
         try {
-            const wb = XLSX.read(e.target.result, { type: "array" });
-            const sheetName = wb.SheetNames.find(n => n.toUpperCase() === "BASE") || wb.SheetNames[0];
-            const json = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: "" });
-            if (!json.length) { alert("Onglet BASE vide !"); return; }
+            const blob = new Blob([XLSX_WORKER_CODE], { type: "application/javascript" });
+            const workerUrl = URL.createObjectURL(blob);
+            const worker = new Worker(workerUrl);
 
-            appData.headers = Object.keys(json[0]);
-            appData.rows = json;
+            worker.onmessage = (ev) => {
+                URL.revokeObjectURL(workerUrl);
+                worker.terminate();
+                hideLoadingMsg();
+                if (!ev.data.ok) { alert("Erreur lecture: " + ev.data.error); return; }
+                processData(ev.data.json, file.name);
+            };
 
-            // Auto-detect columns
-            const opCol = appData.headers.find(h => h.toUpperCase().includes("OPERATEUR")) || appData.headers[0];
-            const chCol = appData.headers.find(h => h.toUpperCase() === "MARQUE2") || appData.headers[0];
-            const vfCol = appData.headers.find(h => h.toUpperCase().includes("VALFOB")) || appData.headers[0];
+            // Fallback main thread si le worker échoue (ex: file://)
+            worker.onerror = () => {
+                URL.revokeObjectURL(workerUrl);
+                worker.terminate();
+                mainThreadParse(buffer, file.name);
+            };
 
-            // Get operators
-            appData.operators = [...new Set(json.map(r => String(r[opCol]||"").trim()).filter(Boolean))];
-
-            // Populate selects
-            populateSelect("selOperateur", appData.operators.map(o => ({v:o, t:o.replace(/\n/g," ").slice(0,80)})));
-            const ml = appData.operators.find(o => o.toUpperCase().includes("MOTORLAND"));
-            if (ml) document.getElementById("selOperateur").value = ml;
-
-            for (const [selId, defaultVal] of [["selChassis",chCol],["selValfob",vfCol],["selOpCol",opCol]]) {
-                populateSelect(selId, appData.headers.map(h => ({v:h, t:h})));
-                document.getElementById(selId).value = defaultVal;
-            }
-
-            document.getElementById("fileNameDisplay").textContent = file.name;
-            document.getElementById("rowCount").textContent = json.length;
-            document.getElementById("colCount").textContent = appData.headers.length;
-            document.getElementById("opCount").textContent = appData.operators.length;
-
-            goToStep(2);
-        } catch(err) {
-            alert("Erreur lecture: " + err.message);
+            // Cloner avant transfert pour garder buffer disponible en fallback
+            worker.postMessage(buffer.slice(0), [buffer.slice(0)]);
+        } catch (_) {
+            mainThreadParse(buffer, file.name);
         }
-        document.getElementById("loadingMsg").classList.add("hidden");
     };
     reader.readAsArrayBuffer(file);
 }
@@ -471,42 +558,73 @@ function parseNum(v) {
     return isNaN(n) ? 0 : n;
 }
 
-function runSearch() {
+// ---- Recherche asynchrone O(n) ----
+async function runSearch() {
     const colOp = document.getElementById("selOpCol").value;
     const colCh = document.getElementById("selChassis").value;
     const colVf = document.getElementById("selValfob").value;
     const opCible = document.getElementById("selOperateur").value;
     const nbC = parseInt(document.getElementById("nbChars").value);
 
+    document.getElementById("btnSearch").disabled = true;
+    setSearchProgress("Filtrage des opérateurs...", 0.05);
+    await tick();
+
     const cible = appData.rows.filter(r => String(r[colOp]||"").toUpperCase().includes(opCible.toUpperCase()));
     const autres = appData.rows.filter(r => !String(r[colOp]||"").toUpperCase().includes(opCible.toUpperCase()));
 
+    // Index préfixe → lignes "autres" : O(n) au lieu de O(n²)
+    setSearchProgress("Construction de l'index de recherche...", 0.15);
+    await tick();
+
+    const autresIndex = new Map();
+    for (const row of autres) {
+        const prefix = cleanChassis(row[colCh]).slice(0, nbC);
+        if (!prefix || prefix === "NAN" || prefix === "UNDEFINED") continue;
+        if (!autresIndex.has(prefix)) autresIndex.set(prefix, []);
+        autresIndex.get(prefix).push(row);
+    }
+
+    // Parcours des lignes cible par chunks pour ne pas bloquer l'UI
+    const CHUNK = 500;
     const found = [];
     let totalMatches = 0;
 
-    for (const row of cible) {
-        const chassis = cleanChassis(row[colCh]);
-        const prefix = chassis.slice(0, nbC);
-        if (!prefix || prefix === "NAN" || prefix === "UNDEFINED") continue;
-        const valfob = parseNum(row[colVf]);
+    for (let i = 0; i < cible.length; i += CHUNK) {
+        const end = Math.min(i + CHUNK, cible.length);
+        for (let j = i; j < end; j++) {
+            const row = cible[j];
+            const chassis = cleanChassis(row[colCh]);
+            const prefix = chassis.slice(0, nbC);
+            if (!prefix || prefix === "NAN" || prefix === "UNDEFINED") continue;
+            const valfob = parseNum(row[colVf]);
 
-        const matches = autres.filter(r => {
-            const p = cleanChassis(r[colCh]).slice(0, nbC);
-            const v = parseNum(r[colVf]);
-            return p === prefix && v > valfob;
-        });
-
-        if (matches.length > 0) {
-            totalMatches += matches.length;
-            found.push({ source: row, chassis, prefix, valfob, matches, colCh, colVf, colOp });
+            const candidates = autresIndex.get(prefix) || [];
+            const matches = candidates.filter(r => parseNum(r[colVf]) > valfob);
+            if (matches.length > 0) {
+                totalMatches += matches.length;
+                found.push({ source: row, chassis, prefix, valfob, matches, colCh, colVf, colOp });
+            }
+        }
+        if (end < cible.length) {
+            setSearchProgress(`Recherche des correspondances... ${Math.round(end / cible.length * 100)}%`, 0.15 + 0.8 * (end / cible.length));
+            await tick();
         }
     }
 
+    setSearchProgress("Finalisation...", 1);
+    await tick();
+
     appData.results = { found, totalMatches, nbCible: cible.length, nbAutres: autres.length, colCh, colVf, colOp, opCible };
+    appData.currentPage = 0;
+
+    hideSearchProgress();
+    document.getElementById("btnSearch").disabled = false;
     renderResults();
     goToStep(3);
 }
 
+// ---- Affichage avec pagination ----
 function renderResults() {
     const r = appData.results;
     document.getElementById("statCible").textContent = r.nbCible.toLocaleString();
@@ -516,8 +634,13 @@ function renderResults() {
     document.getElementById("statMatches").textContent = r.totalMatches.toLocaleString();
     document.getElementById("statMatches").style.color = r.totalMatches > 0 ? "var(--red)" : "var(--green)";
     document.getElementById("btnExport").style.display = r.found.length > 0 ? "" : "none";
+    renderPage(0);
+}
 
+function renderPage(page) {
+    const r = appData.results;
     const container = document.getElementById("resultsContainer");
+    const pagination = document.getElementById("paginationControls");
 
     if (r.found.length === 0) {
         container.innerHTML = `<div class="panel"><div class="empty-state">
@@ -525,13 +648,18 @@ function renderResults() {
             <h3>Aucune anomalie détectée</h3>
             <p>Aucun châssis de ${escHtml(r.opCible.replace(/\n/g," ").slice(0,40))} n'a de correspondance avec une VALFOB supérieure chez un autre opérateur.</p>
         </div></div>`;
+        pagination.classList.add("hidden");
         return;
     }
 
+    const totalPages = Math.ceil(r.found.length / PAGE_SIZE);
+    appData.currentPage = Math.max(0, Math.min(page, totalPages - 1));
+    const start = appData.currentPage * PAGE_SIZE;
+    const pageGroups = r.found.slice(start, start + PAGE_SIZE);
     const dCols = DISPLAY_COLS_PRIORITY.filter(c => appData.headers.includes(c));
 
     let html = "";
-    for (const group of r.found) {
+    for (const group of pageGroups) {
         html += `<div class="result-group">
             <div class="result-header">
                 <div style="display:flex;align-items:center;gap:10px">
@@ -560,23 +688,80 @@ function renderResults() {
         </div>`;
     }
     container.innerHTML = html;
+
+    if (totalPages > 1) {
+        const end = Math.min(start + PAGE_SIZE, r.found.length);
+        pagination.classList.remove("hidden");
+        document.getElementById("pageInfo").textContent =
+            `Page ${appData.currentPage + 1} / ${totalPages} — résultats ${start + 1}–${end} sur ${r.found.length.toLocaleString()}`;
+        document.getElementById("btnPrev").disabled = appData.currentPage === 0;
+        document.getElementById("btnNext").disabled = appData.currentPage >= totalPages - 1;
+    } else {
+        pagination.classList.add("hidden");
+    }
+
+    window.scrollTo({ top: 0, behavior: "smooth" });
 }
+
+function prevPage() { renderPage(appData.currentPage - 1); }
+function nextPage() { renderPage(appData.currentPage + 1); }
 
 function exportResults() {
     if (!appData.results || appData.results.found.length === 0) return;
     const r = appData.results;
     const exportRows = [];
+    const rowTypes = [];
 
     for (const group of r.found) {
         exportRows.push({ ...group.source, _STATUT: `RECHERCHE (${r.opCible.replace(/\n/g," ").slice(0,40)})` });
+        rowTypes.push("cible");
         for (const m of group.matches) {
             exportRows.push({ ...m, _STATUT: "CORRESPONDANCE" });
+            rowTypes.push("match");
         }
         exportRows.push({});
+        rowTypes.push("empty");
     }
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(exportRows);
+
+    const range = XLSX.utils.decode_range(ws["!ref"]);
+
+    // Amber bold for header row
+    const sHeader = {
+        fill: { patternType: "solid", fgColor: { rgb: "1E2642" } },
+        font: { bold: true, color: { rgb: "F59E0B" } },
+        alignment: { horizontal: "center" }
+    };
+    // Amber/yellow for ligne cible (RECHERCHE)
+    const sCible = {
+        fill: { patternType: "solid", fgColor: { rgb: "FDE68A" } },
+        font: { bold: true, color: { rgb: "78350F" } }
+    };
+    // Mint green for correspondances (MATCH)
+    const sMatch = {
+        fill: { patternType: "solid", fgColor: { rgb: "A7F3D0" } },
+        font: { color: { rgb: "064E3B" } }
+    };
+
+    for (let c = 0; c <= range.e.c; c++) {
+        const addr = XLSX.utils.encode_cell({ r: 0, c });
+        if (!ws[addr]) ws[addr] = { v: "", t: "s" };
+        ws[addr].s = sHeader;
+    }
+
+    for (let ri = 0; ri < rowTypes.length; ri++) {
+        const type = rowTypes[ri];
+        if (type === "empty") continue;
+        const style = type === "cible" ? sCible : sMatch;
+        for (let c = 0; c <= range.e.c; c++) {
+            const addr = XLSX.utils.encode_cell({ r: ri + 1, c });
+            if (!ws[addr]) ws[addr] = { v: "", t: "s" };
+            ws[addr].s = style;
+        }
+    }
+
     XLSX.utils.book_append_sheet(wb, ws, "TROUVER");
     XLSX.writeFile(wb, `RESULTAT_${r.opCible.replace(/[^a-zA-Z0-9]/g,"_").slice(0,30)}.xlsx`);
 }
