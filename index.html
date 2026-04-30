@@ -468,7 +468,7 @@ function processData(json, fileName) {
     appData.operators = [...new Set(json.map(r => String(r[opCol]||"").trim()).filter(Boolean))];
 
     populateSelect("selOperateur", appData.operators.map(o => ({v:o, t:o.replace(/\n/g," ").slice(0,80)})));
-    const ml = appData.operators.find(o => o.toUpperCase().includes("MOTORLAND"));
+    const ml = appData.operators.find(o => o.toUpperCase().includes("2179913S"));
     if (ml) document.getElementById("selOperateur").value = ml;
 
     for (const [selId, defaultVal] of [["selChassis",chCol],["selValfob",vfCol],["selOpCol",opCol]]) {
@@ -713,11 +713,14 @@ function exportResults() {
     const rowTypes = [];
 
     for (const group of r.found) {
-        exportRows.push({ ...group.source, _STATUT: `RECHERCHE (${r.opCible.replace(/\n/g," ").slice(0,40)})` });
+        // _STATUT en premier pour qu'il apparaisse comme 1ère colonne
+        exportRows.push({ _STATUT: `CIBLE — ${r.opCible.replace(/\n/g," ").slice(0,40)}`, ...group.source });
         rowTypes.push("cible");
+        let mi = 0;
         for (const m of group.matches) {
-            exportRows.push({ ...m, _STATUT: "CORRESPONDANCE" });
-            rowTypes.push("match");
+            exportRows.push({ _STATUT: "CORRESPONDANCE", ...m });
+            rowTypes.push(mi % 2 === 0 ? "match-a" : "match-b");
+            mi++;
         }
         exportRows.push({});
         rowTypes.push("empty");
@@ -725,44 +728,67 @@ function exportResults() {
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(exportRows);
-
     const range = XLSX.utils.decode_range(ws["!ref"]);
+    const numCols = range.e.c + 1;
 
-    // Amber bold for header row
+    // Bordures
+    const bThin = { style: "thin",   color: { rgb: "BDC8D8" } };
+    const bMed  = { style: "medium", color: { rgb: "1F3864" } };
+    const bOrg  = { style: "medium", color: { rgb: "B45309" } };
+    const bAll  = { top: bThin, bottom: bThin, left: bThin, right: bThin };
+
+    // Styles
     const sHeader = {
-        fill: { patternType: "solid", fgColor: { rgb: "1E2642" } },
-        font: { bold: true, color: { rgb: "F59E0B" } },
-        alignment: { horizontal: "center" }
+        fill: { patternType: "solid", fgColor: { rgb: "1F3864" } },
+        font: { bold: true, color: { rgb: "FFFFFF" }, sz: 11 },
+        alignment: { horizontal: "center", vertical: "center" },
+        border: { top: bMed, bottom: bMed, left: bThin, right: bThin }
     };
-    // Amber/yellow for ligne cible (RECHERCHE)
     const sCible = {
-        fill: { patternType: "solid", fgColor: { rgb: "FDE68A" } },
-        font: { bold: true, color: { rgb: "78350F" } }
+        fill: { patternType: "solid", fgColor: { rgb: "F97316" } },
+        font: { bold: true, color: { rgb: "FFFFFF" }, sz: 10 },
+        alignment: { vertical: "center" },
+        border: { top: bOrg, bottom: bOrg, left: bThin, right: bThin }
     };
-    // Mint green for correspondances (MATCH)
-    const sMatch = {
-        fill: { patternType: "solid", fgColor: { rgb: "A7F3D0" } },
-        font: { color: { rgb: "064E3B" } }
+    const sMatchA = {
+        fill: { patternType: "solid", fgColor: { rgb: "DBEAFE" } },
+        font: { color: { rgb: "1E3A5F" }, sz: 10 },
+        alignment: { vertical: "center" },
+        border: bAll
+    };
+    const sMatchB = {
+        fill: { patternType: "solid", fgColor: { rgb: "EFF6FF" } },
+        font: { color: { rgb: "1E3A5F" }, sz: 10 },
+        alignment: { vertical: "center" },
+        border: bAll
     };
 
-    for (let c = 0; c <= range.e.c; c++) {
+    // En-tête (ligne 0)
+    for (let c = 0; c < numCols; c++) {
         const addr = XLSX.utils.encode_cell({ r: 0, c });
         if (!ws[addr]) ws[addr] = { v: "", t: "s" };
         ws[addr].s = sHeader;
     }
 
+    // Lignes de données
+    const styleMap = { "cible": sCible, "match-a": sMatchA, "match-b": sMatchB };
     for (let ri = 0; ri < rowTypes.length; ri++) {
-        const type = rowTypes[ri];
-        if (type === "empty") continue;
-        const style = type === "cible" ? sCible : sMatch;
-        for (let c = 0; c <= range.e.c; c++) {
+        const style = styleMap[rowTypes[ri]];
+        if (!style) continue;
+        for (let c = 0; c < numCols; c++) {
             const addr = XLSX.utils.encode_cell({ r: ri + 1, c });
             if (!ws[addr]) ws[addr] = { v: "", t: "s" };
             ws[addr].s = style;
         }
     }
 
-    XLSX.utils.book_append_sheet(wb, ws, "TROUVER");
+    // Largeurs de colonnes : STATUT plus large, reste à 18
+    ws["!cols"] = Array.from({ length: numCols }, (_, i) => ({ wch: i === 0 ? 38 : 18 }));
+
+    // Figer la ligne d'en-tête
+    ws["!freeze"] = { xSplit: 0, ySplit: 1, topLeftCell: "A2" };
+
+    XLSX.utils.book_append_sheet(wb, ws, "RESULTATS");
     XLSX.writeFile(wb, `RESULTAT_${r.opCible.replace(/[^a-zA-Z0-9]/g,"_").slice(0,30)}.xlsx`);
 }
 
